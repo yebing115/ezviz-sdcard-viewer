@@ -1,23 +1,28 @@
-"use strict";
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import fs from "node:fs";
+import http, { IncomingMessage, ServerResponse } from "node:http";
+import path from "node:path";
+import { spawn } from "node:child_process";
+import { buildCatalog, loadIndex, type Catalog } from "./ezviz-index";
 
-const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
-const fs = require("node:fs");
-const http = require("node:http");
-const path = require("node:path");
-const { spawn } = require("node:child_process");
-const { buildCatalog, loadIndex } = require("./ezviz-index");
+interface ChooseDirectoryResult {
+  ok: boolean;
+  canceled?: boolean;
+  catalog?: Catalog;
+  error?: string;
+}
 
-let server;
-let serverPort;
-let selectedBaseDir = null;
+let server: http.Server | undefined;
+let serverPort: number | undefined;
+let selectedBaseDir: string | null = null;
 
-function settingsPath() {
+function settingsPath(): string {
   return path.join(app.getPath("userData"), "settings.json");
 }
 
-function loadSettings() {
+function loadSettings(): void {
   try {
-    const settings = JSON.parse(fs.readFileSync(settingsPath(), "utf8"));
+    const settings = JSON.parse(fs.readFileSync(settingsPath(), "utf8")) as { baseDir?: string };
     if (settings.baseDir && fs.existsSync(settings.baseDir)) {
       selectedBaseDir = settings.baseDir;
     }
@@ -26,19 +31,19 @@ function loadSettings() {
   }
 }
 
-function saveSettings() {
+function saveSettings(): void {
   fs.mkdirSync(app.getPath("userData"), { recursive: true });
   fs.writeFileSync(settingsPath(), JSON.stringify({ baseDir: selectedBaseDir }, null, 2));
 }
 
-function requireSelectedBaseDir() {
+function requireSelectedBaseDir(): string {
   if (!selectedBaseDir) {
     throw new Error("请先选择包含 index00.bin/index01.bin 和 hiv*.mp4 的目录");
   }
   return selectedBaseDir;
 }
 
-function sendJson(res, statusCode, body) {
+function sendJson(res: ServerResponse, statusCode: number, body: unknown): void {
   const payload = JSON.stringify(body);
   res.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",
@@ -48,11 +53,11 @@ function sendJson(res, statusCode, body) {
   res.end(payload);
 }
 
-function parseUrl(req) {
-  return new URL(req.url, `http://${req.headers.host}`);
+function parseUrl(req: IncomingMessage): URL {
+  return new URL(req.url ?? "/", `http://${req.headers.host ?? "127.0.0.1"}`);
 }
 
-function streamVideo(req, res, url) {
+function streamVideo(req: IncomingMessage, res: ServerResponse, url: URL): void {
   const id = url.searchParams.get("id");
   const offset = Math.max(0, Number(url.searchParams.get("offset") || "0"));
   const index = loadIndex(requireSelectedBaseDir());
@@ -99,11 +104,11 @@ function streamVideo(req, res, url) {
   });
 
   child.stdout.pipe(res);
-  child.stderr.on("data", (chunk) => {
+  child.stderr.on("data", (chunk: Buffer) => {
     stderr += chunk.toString();
   });
 
-  const stop = () => {
+  const stop = (): void => {
     if (!child.killed) {
       child.kill("SIGKILL");
     }
@@ -127,7 +132,7 @@ function streamVideo(req, res, url) {
   });
 }
 
-function startServer() {
+function startServer(): Promise<number> {
   return new Promise((resolve, reject) => {
     server = http.createServer((req, res) => {
       try {
@@ -145,19 +150,29 @@ function startServer() {
 
         sendJson(res, 404, { error: "Not found" });
       } catch (error) {
-        sendJson(res, 500, { error: error.message });
+        const message = error instanceof Error ? error.message : String(error);
+        sendJson(res, 500, { error: message });
       }
     });
 
     server.on("error", reject);
     server.listen(0, "127.0.0.1", () => {
-      serverPort = server.address().port;
+      const address = server?.address();
+      if (!address || typeof address === "string") {
+        reject(new Error("Cannot determine local server port"));
+        return;
+      }
+      serverPort = address.port;
       resolve(serverPort);
     });
   });
 }
 
-function createWindow() {
+function createWindow(): void {
+  if (!serverPort) {
+    throw new Error("Local server is not started");
+  }
+
   const win = new BrowserWindow({
     width: 1280,
     height: 820,
@@ -182,14 +197,14 @@ function createWindow() {
   });
 }
 
-app.whenReady().then(async () => {
-  loadSettings();
-  ipcMain.handle("choose-directory", async (event) => {
+function registerIpc(): void {
+  ipcMain.handle("choose-directory", async (event): Promise<ChooseDirectoryResult> => {
     const window = BrowserWindow.fromWebContents(event.sender);
-    const result = await dialog.showOpenDialog(window, {
+    const options: Electron.OpenDialogOptions = {
       title: "选择包含 bin 和 mp4 文件的目录",
       properties: ["openDirectory"]
-    });
+    };
+    const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);
 
     if (result.canceled || result.filePaths.length === 0) {
       return { ok: false, canceled: true };
@@ -202,10 +217,15 @@ app.whenReady().then(async () => {
       saveSettings();
       return { ok: true, catalog };
     } catch (error) {
-      return { ok: false, error: error.message };
+      const message = error instanceof Error ? error.message : String(error);
+      return { ok: false, error: message };
     }
   });
+}
 
+app.whenReady().then(async () => {
+  loadSettings();
+  registerIpc();
   await startServer();
   createWindow();
 

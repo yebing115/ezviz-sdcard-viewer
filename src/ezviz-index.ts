@@ -1,39 +1,109 @@
-"use strict";
+import fs from "node:fs";
+import path from "node:path";
 
-const fs = require("node:fs");
-const path = require("node:path");
-
-const INDEX_NAMES = ["index00.bin", "index01.bin"];
+const INDEX_NAMES = ["index00.bin", "index01.bin"] as const;
 const MIN_TS = 1262304000;
 const MAX_TS = 4102444800;
 
-function readU32(buf, offset) {
+export interface IndexHeader {
+  magic: number;
+  version: number;
+  fileCount: number;
+  blockSize: number;
+  writePos: number;
+  maxIndex: number;
+}
+
+export interface SpecialMarker {
+  index: number;
+  flag: number;
+  startTs: number;
+  endTs: number;
+}
+
+export interface IndexRecord {
+  id: string;
+  index: number;
+  filename: string;
+  filePath: string;
+  exists: boolean;
+  channel: number;
+  type: number;
+  blockCount: number;
+  startTs: number;
+  endTs: number;
+  startTime: string;
+  endTime: string;
+  durationSeconds: number;
+  chronologicalOrder: number;
+}
+
+export interface ParsedIndex {
+  sourceFile: string;
+  sourcePath: string;
+  header: IndexHeader;
+  special: SpecialMarker;
+  recordStart: number;
+  records: IndexRecord[];
+}
+
+export interface DaySegment extends IndexRecord {
+  partId: string;
+  dayKey: string;
+  partStartTs: number;
+  partEndTs: number;
+  partStartTime: string;
+  partEndTime: string;
+  playOffsetSeconds: number;
+  partDurationSeconds: number;
+}
+
+export interface CatalogDay {
+  date: string;
+  totalSeconds: number;
+  segments: DaySegment[];
+}
+
+export interface Catalog {
+  baseDir: string;
+  indexSource: string;
+  generatedAt: string;
+  fileCount: number;
+  writePos: number;
+  recordCount: number;
+  playableCount: number;
+  missingCount: number;
+  firstTime: string;
+  lastTime: string;
+  specialMarker: {
+    index: number;
+    startTime: string;
+    endTime: string;
+  };
+  days: CatalogDay[];
+}
+
+function readU32(buf: Buffer, offset: number): number {
   return buf.readUInt32LE(offset);
 }
 
-function readU16(buf, offset) {
+function readU16(buf: Buffer, offset: number): number {
   return buf.readUInt16LE(offset);
 }
 
-function isPlausibleTimeRange(startTs, endTs) {
-  return (
-    startTs >= MIN_TS &&
-    startTs <= MAX_TS &&
-    endTs >= MIN_TS &&
-    endTs <= MAX_TS &&
-    endTs >= startTs
-  );
+function isPlausibleTimeRange(startTs: number, endTs: number): boolean {
+  return startTs >= MIN_TS && startTs <= MAX_TS && endTs >= MIN_TS && endTs <= MAX_TS && endTs >= startTs;
 }
 
-function tsToIsoLike(ts) {
+function tsToIsoLike(ts: number): string {
   return new Date(ts * 1000).toISOString().replace("T", " ").slice(0, 19);
 }
 
-function toDateKey(ts) {
+function toDateKey(ts: number): string {
   return new Date(ts * 1000).toISOString().slice(0, 10);
 }
 
-function findRecordStart(buf) {
+function findRecordStart(buf: Buffer): number {
   for (let offset = 0x40; offset < buf.length - 32; offset += 16) {
     if (buf[offset + 4] === 0x01 && buf[offset + 5] === 0x00 && readU32(buf, offset) === 0) {
       return offset;
@@ -42,12 +112,12 @@ function findRecordStart(buf) {
   throw new Error("Cannot find index record area");
 }
 
-function parseIndexBuffer(buf, baseDir) {
+function parseIndexBuffer(buf: Buffer, baseDir: string): Omit<ParsedIndex, "sourceFile" | "sourcePath"> {
   if (buf.length < 0x500) {
     throw new Error("Index file is too small");
   }
 
-  const header = {
+  const header: IndexHeader = {
     magic: readU32(buf, 0x00),
     version: readU32(buf, 0x08),
     fileCount: readU32(buf, 0x0c),
@@ -56,7 +126,7 @@ function parseIndexBuffer(buf, baseDir) {
     maxIndex: readU32(buf, 0x18)
   };
 
-  const special = {
+  const special: SpecialMarker = {
     index: readU16(buf, 0x30),
     flag: readU16(buf, 0x32),
     startTs: readU32(buf, 0x34),
@@ -64,7 +134,7 @@ function parseIndexBuffer(buf, baseDir) {
   };
 
   const recordStart = findRecordStart(buf);
-  const records = [];
+  const records: IndexRecord[] = [];
 
   for (let i = 0; i < header.fileCount; i += 1) {
     const offset = recordStart + i * 32;
@@ -109,21 +179,21 @@ function parseIndexBuffer(buf, baseDir) {
   };
 }
 
-function loadIndex(baseDir) {
+export function loadIndex(baseDir: string): ParsedIndex {
   const indexPath = INDEX_NAMES.map((name) => path.join(baseDir, name)).find((candidate) => fs.existsSync(candidate));
   if (!indexPath) {
     throw new Error(`No index file found: ${INDEX_NAMES.join(" or ")}`);
   }
-  const parsed = parseIndexBuffer(fs.readFileSync(indexPath), baseDir);
+
   return {
     sourceFile: path.basename(indexPath),
     sourcePath: indexPath,
-    ...parsed
+    ...parseIndexBuffer(fs.readFileSync(indexPath), baseDir)
   };
 }
 
-function splitRecordByDay(record) {
-  const parts = [];
+function splitRecordByDay(record: IndexRecord): DaySegment[] {
+  const parts: DaySegment[] = [];
   let cursor = record.startTs;
 
   while (cursor < record.endTs) {
@@ -147,10 +217,10 @@ function splitRecordByDay(record) {
   return parts;
 }
 
-function buildCatalog(baseDir) {
+export function buildCatalog(baseDir: string): Catalog {
   const index = loadIndex(baseDir);
   const playableRecords = index.records.filter((record) => record.exists);
-  const days = new Map();
+  const days = new Map<string, CatalogDay>();
 
   for (const record of playableRecords) {
     for (const part of splitRecordByDay(record)) {
@@ -161,7 +231,9 @@ function buildCatalog(baseDir) {
           segments: []
         });
       }
+
       const day = days.get(part.dayKey);
+      if (!day) continue;
       day.totalSeconds += part.partDurationSeconds;
       day.segments.push(part);
     }
@@ -196,8 +268,3 @@ function buildCatalog(baseDir) {
     days: dayList
   };
 }
-
-module.exports = {
-  buildCatalog,
-  loadIndex
-};

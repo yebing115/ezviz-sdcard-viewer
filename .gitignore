@@ -1,3 +1,5 @@
 node_modules/
+dist/
 npm-debug.log*
 electron-start.*.log
+.claude/settings.local.json

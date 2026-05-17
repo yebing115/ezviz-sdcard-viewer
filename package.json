@@ -3,12 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "description": "Local Electron viewer for EZVIZ SD card recording fragments.",
-  "main": "src/main.js",
+  "main": "dist/main.js",
   "scripts": {
-    "start": "electron .",
-    "check": "node src/check-index.js"
+    "build": "tsc && node scripts/copy-static.cjs",
+    "start": "npm run build && electron .",
+    "check": "npm run build && node dist/check-index.js"
   },
   "devDependencies": {
-    "electron": "^31.7.7"
+    "@types/node": "^25.8.0",
+    "electron": "^31.7.7",
+    "typescript": "^6.0.3"
   }
 }
