@@ -1,75 +1,75 @@
 # EZVIZ SD Card Viewer
 
-本地 Electron 播放器，用所选目录中的萤石 SD 卡文件查看录像。
+A local Electron player for viewing EZVIZ SD card recordings from a selected directory.
 
-## 运行
+## Run
 
 ```powershell
 npm start
 ```
 
-启动后点击“选择目录”，选择包含 `index00.bin` 或 `index01.bin` 以及 `hiv*.mp4` 的目录。
-应用会记住上次选择的目录；下次启动时会优先读取该目录。
+After startup, click "Select Directory" and choose a directory that contains `index00.bin` or `index01.bin` and `hiv*.mp4` files.
+The app remembers the last selected directory and will try to load it first on the next startup.
 
-## 构建
+## Build
 
-应用代码使用 TypeScript 编写，编译输出在 `dist/`：
+The application code is written in TypeScript, with compiled output in `dist/`:
 
 ```powershell
 npm run build
 ```
 
-检查某个数据目录：
+Check a data directory:
 
 ```powershell
 npm run check -- C:\path\to\sdcard-copy
 ```
 
-## 打包
+## Package
 
-生成目录版应用：
+Create an unpacked application directory:
 
 ```powershell
 npm run package
 ```
 
-生成 Windows 可运行包：
+Create a Windows runnable package:
 
 ```powershell
 npm run dist:win
 ```
 
-输出目录为 `release/`。默认会生成 portable exe 和 zip 包。
+The output directory is `release/`. By default, this produces a portable exe and a zip package.
 
-如果希望软件包自带 `ffmpeg`，打包前把 `ffmpeg.exe` 放到：
+To bundle `ffmpeg` with the package, place `ffmpeg.exe` here before packaging:
 
 ```text
 vendor\ffmpeg\ffmpeg.exe
 ```
 
-也可以直接从当前系统 PATH 复制：
+You can also copy it directly from the current system `PATH`:
 
 ```powershell
 npm run bundle:ffmpeg
 ```
 
-生成自带 `ffmpeg` 的 Windows 包：
+Create a self-contained Windows package with bundled `ffmpeg`:
 
 ```powershell
 npm run dist:win:self-contained
 ```
 
-没有内置 `ffmpeg.exe` 时，应用会回退使用系统 PATH 里的 `ffmpeg`。
+If no bundled `ffmpeg.exe` is present, the app falls back to `ffmpeg` from the system `PATH`.
 
-## 数据来源
+## Data Source
 
-应用运行时直接解析所选目录里的 `index00.bin` 或 `index01.bin`，不会读取 `recordings.csv`、`recordings_chronological.csv` 等 CSV 文件。更新 bin/mp4 文件后，点击界面里的“刷新”会重新统计。
+At runtime, the app parses `index00.bin` or `index01.bin` directly from the selected directory. It does not read CSV files such as `recordings.csv` or `recordings_chronological.csv`. After updating bin/mp4 files, click "Refresh" in the UI to rescan them.
 
-## 播放方式
+## Playback
 
-`hivXXXXX.mp4` 实际是 MPEG-PS 容器，Chromium 不能稳定直接播放。应用内置本地 HTTP 接口，播放时调用 `ffmpeg` 将对应片段从指定偏移实时封装为浏览器可播放的 fragmented MP4。
+`hivXXXXX.mp4` files are actually MPEG-PS containers, which Chromium cannot play directly and reliably. The app includes a local HTTP endpoint. During playback, it calls `ffmpeg` to repackage the corresponding segment from the specified offset into fragmented MP4 that the browser can play.
 
-没有随包内置 `ffmpeg.exe` 时，需要系统 PATH 中可用：
+If `ffmpeg.exe` is not bundled with the package, `ffmpeg` must be available from the system `PATH`:
 
 ```powershell
 ffmpeg

@@ -1,41 +1,39 @@
-# EZVIZ/Hikvision 摄像头 SD 卡文件格式
+# EZVIZ/Hikvision Camera SD Card File Format
 
-本文基于当前目录中的 `index00.bin`、`index01.bin`、`logCurFile.bin`、`logMainFile.bin`
-和 `hiv*.mp4` 样本反向分析。已被样本验证的字段会明确写出；不能稳定解释的字段只记录
-观测值，避免把偶然值当成格式规范。
+This document is based on reverse analysis of the `index00.bin`, `index01.bin`, `logCurFile.bin`, `logMainFile.bin`, and `hiv*.mp4` samples in the current directory. Fields verified against the samples are stated explicitly. Fields that cannot be explained reliably only record observed values, to avoid treating incidental values as format specifications.
 
-## 文件列表
+## File List
 
-| 文件 | 样本大小 | 已验证用途 |
-|------|----------|------------|
-| index00.bin | 16,777,216 (0x1000000) | 视频文件索引 |
-| index01.bin | 16,777,216 (0x1000000) | index00.bin 的镜像副本 |
-| logCurFile.bin | 16,002,048 | 近期/当前日志槽位文件，包含环形尾段和当前段 |
-| logMainFile.bin | 32,004,192 | 历史日志槽位文件 |
-| hivXXXXX.mp4 | 268,435,456 (256 MiB) | 固定大小的视频分片，内容为 MPEG-PS 容器 |
+| File | Sample size | Verified purpose |
+|------|-------------|------------------|
+| index00.bin | 16,777,216 (0x1000000) | Video file index |
+| index01.bin | 16,777,216 (0x1000000) | Mirror copy of index00.bin |
+| logCurFile.bin | 16,002,048 | Recent/current log slot file, containing a ring-buffer tail segment and the current segment |
+| logMainFile.bin | 32,004,192 | Historical log slot file |
+| hivXXXXX.mp4 | 268,435,456 (256 MiB) | Fixed-size video segment; content is an MPEG-PS container |
 
-当前样本中 `index00.bin` 与 `index01.bin` 字节完全相同。
+In the current sample, `index00.bin` and `index01.bin` are byte-for-byte identical.
 
 ---
 
-## 一、index00.bin / index01.bin（索引文件）
+## 1. index00.bin / index01.bin (Index Files)
 
-### 1.1 Header（48 字节，Offset 0x00）
+### 1.1 Header (48 bytes, offset 0x00)
 
-| Offset | 长度 | 类型 | 样本值 | 说明 |
-|--------|------|------|--------|------|
+| Offset | Length | Type | Sample value | Description |
+|--------|--------|------|--------------|-------------|
 | 0x00 | 4 | u32 LE | 0x0004E72E | Magic number |
 | 0x04 | 4 | u32 LE | 0 | Reserved |
-| 0x08 | 4 | u32 LE | 3 | 版本号 |
-| 0x0C | 4 | u32 LE | 475 | MP4 文件总数 |
-| 0x10 | 4 | u32 LE | 136 (0x88) | 块/分片参数，具体含义未完全确认 |
-| 0x14 | 4 | u32 LE | 135 | 当前写入位置，即环形索引中的下一写入槽 |
-| 0x18 | 4 | u32 LE | 65535 (0xFFFF) | 最大索引标记 |
-| 0x1C | 20 | - | 0 | Padding，直到 0x30 |
+| 0x08 | 4 | u32 LE | 3 | Version number |
+| 0x0C | 4 | u32 LE | 475 | Total number of MP4 files |
+| 0x10 | 4 | u32 LE | 136 (0x88) | Block/segment parameter; exact meaning not fully confirmed |
+| 0x14 | 4 | u32 LE | 135 | Current write position, i.e. the next write slot in the circular index |
+| 0x18 | 4 | u32 LE | 65535 (0xFFFF) | Maximum index marker |
+| 0x1C | 20 | - | 0 | Padding up to 0x30 |
 
-### 1.2 特殊/活动记录（16 字节，Offset 0x30）
+### 1.2 Special/Active Record (16 bytes, offset 0x30)
 
-该记录在样本中为：
+In the sample, this record is:
 
 ```
 index=135, flag=17,
@@ -43,22 +41,19 @@ start=2025-02-07 21:27:28,
 end=2025-02-07 22:11:32
 ```
 
-它不是 `hiv00135.mp4` 已落盘索引记录的时间范围；`hiv00135.mp4` 在索引记录区中仍是
-`2024-10-20 18:43:27 ~ 2024-10-20 19:37:00`。因此这个区域应理解为活动/待提交
-写入标记，不能直接用来给索引记录打 `live` 标记。
+It is not the time range of the flushed index record for `hiv00135.mp4`; in the index record area, `hiv00135.mp4` is still `2024-10-20 18:43:27 ~ 2024-10-20 19:37:00`. Therefore, this area should be understood as an active/pending write marker and should not be used directly to mark an index record as `live`.
 
-| Offset | 长度 | 类型 | 说明 |
-|--------|------|------|------|
-| 0x00 | 2 | u16 LE | 写入槽/记录索引 |
-| 0x02 | 2 | u16 LE | 标志或通道相关字段；样本为 17，不是主码流通道 1 |
-| 0x04 | 4 | u32 LE | 活动区间开始时间 |
-| 0x08 | 4 | u32 LE | 活动区间结束时间 |
+| Offset | Length | Type | Description |
+|--------|--------|------|-------------|
+| 0x00 | 2 | u16 LE | Write slot / record index |
+| 0x02 | 2 | u16 LE | Flag or channel-related field; sample value is 17, not main-stream channel 1 |
+| 0x04 | 4 | u32 LE | Active interval start time |
+| 0x08 | 4 | u32 LE | Active interval end time |
 | 0x0C | 4 | u32 LE | Reserved |
 
-### 1.3 位图区（Offset 0x40 起）
+### 1.3 Bitmap Area (starting at offset 0x40)
 
-样本中记录区起点为 `0x500`，因此位图区大小为 `0x4C0` (1216) 字节。
-位图区呈现每 16 字节一组的标记模式，例如：
+In the sample, the record area starts at `0x500`, so the bitmap area size is `0x4C0` (1216) bytes. The bitmap area shows a marker pattern in 16-byte groups, for example:
 
 ```
 0x40: 0000000000000000ffff000000000000
@@ -66,32 +61,32 @@ end=2025-02-07 22:11:32
 0x60: ffff0000000000000000000000000000
 ```
 
-`0xFFFF` 标记与块状态有关，但具体位含义未完全确认。
+The `0xFFFF` markers are related to block state, but the exact bit meanings have not been fully confirmed.
 
-### 1.4 索引记录区（每条 32 字节，从 0x500 开始）
+### 1.4 Index Record Area (32 bytes per record, starting at 0x500)
 
-共有 `file_count` 条记录，每条按 `index` 映射到 `hiv{index:05d}.mp4`。
+There are `file_count` records. Each record maps by `index` to `hiv{index:05d}.mp4`.
 
-| Offset | 长度 | 类型 | 说明 |
-|--------|------|------|------|
-| 0x00 | 4 | u32 LE | 记录索引（0 ~ file_count-1） |
-| 0x04 | 2 | u16 LE | 通道号；样本均为 1 |
-| 0x06 | 2 | u16 LE | 录制类型 / 事件类型 |
-| 0x08 | 4 | u32 LE | 开始时间（Unix timestamp） |
-| 0x0C | 4 | u32 LE | 结束时间（Unix timestamp） |
-| 0x10 | 4 | u32 LE | Reserved，样本为 0 |
-| 0x14 | 4 | u32 LE | 数据/块使用量指示，样本中为小整数 |
-| 0x18 | 8 | - | Padding，样本为全零 |
+| Offset | Length | Type | Description |
+|--------|--------|------|-------------|
+| 0x00 | 4 | u32 LE | Record index (`0` to `file_count-1`) |
+| 0x04 | 2 | u16 LE | Channel number; all sample records are 1 |
+| 0x06 | 2 | u16 LE | Recording type / event type |
+| 0x08 | 4 | u32 LE | Start time (Unix timestamp) |
+| 0x0C | 4 | u32 LE | End time (Unix timestamp) |
+| 0x10 | 4 | u32 LE | Reserved; sample value is 0 |
+| 0x14 | 4 | u32 LE | Data/block usage indicator; sample values are small integers |
+| 0x18 | 8 | - | Padding; all zero in the sample |
 
-### 1.5 循环缓冲区机制
+### 1.5 Circular Buffer Mechanism
 
-`write_pos` 是下一写入槽，也是当前索引中最老录像所在槽。样本中 `write_pos=135`：
+`write_pos` is the next write slot and also the slot containing the oldest recording in the current index. In the sample, `write_pos=135`:
 
-- 最老索引记录：`hiv00135.mp4`，`2024-10-20 18:43:27 ~ 2024-10-20 19:37:00`
-- 最新索引记录：`hiv00134.mp4`，`2025-02-07 20:28:10 ~ 2025-02-07 21:27:28`
-- 活动/待写入标记：slot 135，`2025-02-07 21:27:28 ~ 2025-02-07 22:11:32`
+- Oldest index record: `hiv00135.mp4`, `2024-10-20 18:43:27 ~ 2024-10-20 19:37:00`
+- Newest index record: `hiv00134.mp4`, `2025-02-07 20:28:10 ~ 2025-02-07 21:27:28`
+- Active/pending write marker: slot 135, `2025-02-07 21:27:28 ~ 2025-02-07 22:11:32`
 
-按时间从旧到新排序时，应使用：
+When sorting chronologically from oldest to newest, use:
 
 ```
 write_pos, write_pos+1, ..., file_count-1, 0, 1, ..., write_pos-1
@@ -99,62 +94,60 @@ write_pos, write_pos+1, ..., file_count-1, 0, 1, ..., write_pos-1
 
 ---
 
-## 二、logCurFile.bin / logMainFile.bin（日志槽位文件）
+## 2. logCurFile.bin / logMainFile.bin (Log Slot Files)
 
-日志记录从 offset `0x20` 开始，每个槽位 8 字节。header 的前 32 字节在两个文件中
-都存在，但字段含义并不完全相同，尤其不能把 0x10 和 0x14 稳定解释为
-“当前记录数/最大记录容量”。
+Log records start at offset `0x20`, with 8 bytes per slot. The first 32 bytes of the header exist in both files, but the field meanings are not completely identical. In particular, offsets 0x10 and 0x14 cannot be reliably interpreted as "current record count / maximum record capacity".
 
-### 2.1 Header（32 字节，Offset 0x00）
+### 2.1 Header (32 bytes, offset 0x00)
 
-| Offset | 长度 | 类型 | 样本观测 |
-|--------|------|------|----------|
-| 0x00 | 4 | u32 LE | 常为时间戳；logCur 为最新时间 `2025-02-07 22:11:34` |
-| 0x04 | 4 | u32 LE | 常为边界时间；logCur 为 `2024-09-16 09:29:58` |
-| 0x08 | 4 | u32 LE | logCur 中重复最新时间 |
-| 0x0C | 4 | u32 LE | logCur 中为 1；logMain 中为时间戳 |
-| 0x10 | 4 | u32 LE | logCur 中为 108，像当前 slot；logMain 中为时间戳 |
-| 0x14 | 4 | u32 LE | logCur 中为 230，像环形尾段起点；logMain 中为时间戳 |
-| 0x18 | 4 | u32 LE | 未确认 |
-| 0x1C | 4 | u32 LE | 时间戳/边界标记 |
+| Offset | Length | Type | Sample observation |
+|--------|--------|------|--------------------|
+| 0x00 | 4 | u32 LE | Often a timestamp; in logCur, the latest time `2025-02-07 22:11:34` |
+| 0x04 | 4 | u32 LE | Often a boundary time; in logCur, `2024-09-16 09:29:58` |
+| 0x08 | 4 | u32 LE | Repeats the latest time in logCur |
+| 0x0C | 4 | u32 LE | 1 in logCur; a timestamp in logMain |
+| 0x10 | 4 | u32 LE | 108 in logCur, likely the current slot; a timestamp in logMain |
+| 0x14 | 4 | u32 LE | 230 in logCur, likely the ring-buffer tail start; a timestamp in logMain |
+| 0x18 | 4 | u32 LE | Unconfirmed |
+| 0x1C | 4 | u32 LE | Timestamp / boundary marker |
 
-### 2.2 日志记录（每槽 8 字节，Offset 0x20 起）
+### 2.2 Log Records (8 bytes per slot, starting at offset 0x20)
 
-| Offset | 长度 | 类型 | 说明 |
-|--------|------|------|------|
-| 0x00 | 4 | u32 LE | 录制开始时间（Unix timestamp） |
-| 0x04 | 4 | u32 LE | 录制结束时间；0 表示正在录制或未提交结束时间 |
+| Offset | Length | Type | Description |
+|--------|--------|------|-------------|
+| 0x00 | 4 | u32 LE | Recording start time (Unix timestamp) |
+| 0x04 | 4 | u32 LE | Recording end time; 0 means recording is in progress or the end time has not been committed |
 
-不能简单在第一条 `start_ts == 0` 后停止并认为后面全零。当前样本中：
+Do not simply stop at the first `start_ts == 0` record and assume all following records are zero. In the current sample:
 
-- `logMainFile.bin`：slot 0 ~ 476 是有效连续段，共 477 条；
-- `logCurFile.bin`：slot 0 ~ 108 是当前段，共 109 条，其中 slot 108 的结束时间为 0；
-- `logCurFile.bin`：slot 230 ~ 248 还有一个有效环形尾段，共 19 条；
-- `logCurFile.bin`：slot 229 为边界标记 `(0, 2024-09-16 09:29:58)`，不是普通日志记录。
+- `logMainFile.bin`: slots 0 to 476 are a valid continuous segment, 477 records in total.
+- `logCurFile.bin`: slots 0 to 108 are the current segment, 109 records in total, with slot 108 having an end time of 0.
+- `logCurFile.bin`: slots 230 to 248 contain another valid ring-buffer tail segment, 19 records in total.
+- `logCurFile.bin`: slot 229 is a boundary marker `(0, 2024-09-16 09:29:58)`, not a normal log record.
 
-因此解析日志时应扫描所有槽位，提取合理的时间戳对，并按连续 slot 分段。
+Therefore, log parsing should scan all slots, extract plausible timestamp pairs, and group them by continuous slot ranges.
 
 ---
 
-## 三、时间戳
+## 3. Timestamps
 
-样本中的时间字段均为小端 u32 Unix epoch 秒数。本文和脚本默认按 UTC 输出时间字符串。
-
----
-
-## 四、视频文件
-
-- 文件名：`hivXXXXX.mp4`（5 位数字，前导零）
-- 大小：固定 268,435,456 字节（256 MiB）
-- 文件头：以 MPEG-PS pack header `00 00 01 BA` 开始
-- 容器：MPEG-PS (`ffprobe` 显示 `format_name=mpeg`)
-- 视频编码：H.264/AVC
-
-这些文件扩展名虽然是 `.mp4`，但不是标准 ISO BMFF/MP4 容器。
+All time fields in the sample are little-endian u32 Unix epoch seconds. This document and the scripts output timestamp strings in UTC by default.
 
 ---
 
-## 五、当前样本摘要
+## 4. Video Files
+
+- File name: `hivXXXXX.mp4` (5 digits, zero-padded)
+- Size: fixed at 268,435,456 bytes (256 MiB)
+- File header: starts with MPEG-PS pack header `00 00 01 BA`
+- Container: MPEG-PS (`ffprobe` reports `format_name=mpeg`)
+- Video codec: H.264/AVC
+
+Although these files use the `.mp4` extension, they are not standard ISO BMFF/MP4 containers.
+
+---
+
+## 5. Current Sample Summary
 
 ```
 Index:
@@ -172,7 +165,7 @@ Special/activity marker:
   Slot 135  2025-02-07 21:27:28 ~ 2025-02-07 22:11:32
 
 Logs:
-  logMainFile.bin: slot 0-476, 477 条，2023-06-27 ~ 2024-09-16
-  logCurFile.bin:  slot 230-248, 19 条，2024-09-16 ~ 2024-09-30
-  logCurFile.bin:  slot 0-108, 109 条，2024-10-01 ~ 2025-02-07
+  logMainFile.bin: slots 0-476, 477 records, 2023-06-27 ~ 2024-09-16
+  logCurFile.bin:  slots 230-248, 19 records, 2024-09-16 ~ 2024-09-30
+  logCurFile.bin:  slots 0-108, 109 records, 2024-10-01 ~ 2025-02-07
 ```
