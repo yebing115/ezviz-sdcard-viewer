@@ -11,6 +11,10 @@ npm start
 After startup, click "Select Directory" and choose a directory that contains `index00.bin` or `index01.bin` and `hiv*.mp4` files.
 The app remembers the last selected directory and will try to load it first on the next startup.
 
+## Language
+
+The app supports Simplified Chinese and English. Use the language selector in the sidebar to switch languages; the selected language is saved locally.
+
 ## Build
 
 The application code is written in TypeScript, with compiled output in `dist/`:

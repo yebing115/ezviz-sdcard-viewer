@@ -12,9 +12,35 @@ interface ChooseDirectoryResult {
   error?: string;
 }
 
+type Locale = "zh-CN" | "en";
+type MainTranslationKey = "selectDirectoryTitle" | "missingDirectory" | "recordingNotFound" | "notFound";
+
+const mainTranslations: Record<Locale, Record<MainTranslationKey, string>> = {
+  "zh-CN": {
+    selectDirectoryTitle: "选择包含 bin 和 mp4 文件的目录",
+    missingDirectory: "请先选择包含 index00.bin/index01.bin 和 hiv*.mp4 的目录",
+    recordingNotFound: "找不到录像分片",
+    notFound: "未找到"
+  },
+  en: {
+    selectDirectoryTitle: "Select the directory containing bin and mp4 files",
+    missingDirectory: "Select a directory containing index00.bin/index01.bin and hiv*.mp4 first",
+    recordingNotFound: "Recording fragment not found",
+    notFound: "Not found"
+  }
+};
+
 let server: http.Server | undefined;
 let serverPort: number | undefined;
 let selectedBaseDir: string | null = null;
+
+function normalizeLocale(value: unknown): Locale {
+  return String(value || "").toLowerCase().startsWith("zh") ? "zh-CN" : "en";
+}
+
+function t(locale: Locale, key: MainTranslationKey): string {
+  return mainTranslations[locale][key];
+}
 
 function ffmpegExecutable(): string {
   const executable = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
@@ -45,9 +71,9 @@ function saveSettings(): void {
   fs.writeFileSync(settingsPath(), JSON.stringify({ baseDir: selectedBaseDir }, null, 2));
 }
 
-function requireSelectedBaseDir(): string {
+function requireSelectedBaseDir(locale: Locale): string {
   if (!selectedBaseDir) {
-    throw new Error("请先选择包含 index00.bin/index01.bin 和 hiv*.mp4 的目录");
+    throw new Error(t(locale, "missingDirectory"));
   }
   return selectedBaseDir;
 }
@@ -67,13 +93,14 @@ function parseUrl(req: IncomingMessage): URL {
 }
 
 function streamVideo(req: IncomingMessage, res: ServerResponse, url: URL): void {
+  const locale = normalizeLocale(url.searchParams.get("lang"));
   const id = url.searchParams.get("id");
   const offset = Math.max(0, Number(url.searchParams.get("offset") || "0"));
-  const index = loadIndex(requireSelectedBaseDir());
+  const index = loadIndex(requireSelectedBaseDir(locale));
   const record = index.records.find((item) => String(item.index) === String(id));
 
   if (!record || !record.exists) {
-    sendJson(res, 404, { error: "Recording fragment not found" });
+    sendJson(res, 404, { error: t(locale, "recordingNotFound") });
     return;
   }
 
@@ -146,9 +173,10 @@ function startServer(): Promise<number> {
     server = http.createServer((req, res) => {
       try {
         const url = parseUrl(req);
+        const locale = normalizeLocale(url.searchParams.get("lang"));
 
         if (url.pathname === "/api/catalog") {
-          sendJson(res, 200, buildCatalog(requireSelectedBaseDir()));
+          sendJson(res, 200, buildCatalog(requireSelectedBaseDir(locale)));
           return;
         }
 
@@ -157,7 +185,7 @@ function startServer(): Promise<number> {
           return;
         }
 
-        sendJson(res, 404, { error: "Not found" });
+        sendJson(res, 404, { error: t(locale, "notFound") });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         sendJson(res, 500, { error: message });
@@ -207,10 +235,11 @@ function createWindow(): void {
 }
 
 function registerIpc(): void {
-  ipcMain.handle("choose-directory", async (event): Promise<ChooseDirectoryResult> => {
+  ipcMain.handle("choose-directory", async (event, rawLocale): Promise<ChooseDirectoryResult> => {
+    const locale = normalizeLocale(rawLocale);
     const window = BrowserWindow.fromWebContents(event.sender);
     const options: Electron.OpenDialogOptions = {
-      title: "选择包含 bin 和 mp4 文件的目录",
+      title: t(locale, "selectDirectoryTitle"),
       properties: ["openDirectory"]
     };
     const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);

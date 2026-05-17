@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 contextBridge.exposeInMainWorld("ezviz", {
-  chooseDirectory: () => ipcRenderer.invoke("choose-directory") as Promise<unknown>
+  chooseDirectory: (locale: string) => ipcRenderer.invoke("choose-directory", locale) as Promise<unknown>
 });
