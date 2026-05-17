@@ -16,6 +16,15 @@ let server: http.Server | undefined;
 let serverPort: number | undefined;
 let selectedBaseDir: string | null = null;
 
+function ffmpegExecutable(): string {
+  const executable = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
+  const bundled = app.isPackaged
+    ? path.join(process.resourcesPath, "ffmpeg", executable)
+    : path.join(__dirname, "..", "vendor", "ffmpeg", executable);
+
+  return fs.existsSync(bundled) ? bundled : "ffmpeg";
+}
+
 function settingsPath(): string {
   return path.join(app.getPath("userData"), "settings.json");
 }
@@ -94,7 +103,7 @@ function streamVideo(req: IncomingMessage, res: ServerResponse, url: URL): void 
     "pipe:1"
   ];
 
-  const child = spawn("ffmpeg", ffmpegArgs, { windowsHide: true });
+  const child = spawn(ffmpegExecutable(), ffmpegArgs, { windowsHide: true });
   let stderr = "";
 
   res.writeHead(200, {

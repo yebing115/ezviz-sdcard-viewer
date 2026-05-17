@@ -1,5 +1,7 @@
 node_modules/
 dist/
+release/
 npm-debug.log*
 electron-start.*.log
 .claude/settings.local.json
+vendor/ffmpeg/ffmpeg.exe

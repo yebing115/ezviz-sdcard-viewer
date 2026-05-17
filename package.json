@@ -3,15 +3,52 @@
   "version": "0.1.0",
   "private": true,
   "description": "Local Electron viewer for EZVIZ SD card recording fragments.",
+  "author": "Local",
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc && node scripts/copy-static.cjs",
     "start": "npm run build && electron .",
-    "check": "npm run build && node dist/check-index.js"
+    "check": "npm run build && node dist/check-index.js",
+    "bundle:ffmpeg": "node scripts/bundle-ffmpeg.cjs",
+    "package": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder",
+    "dist:win:self-contained": "npm run bundle:ffmpeg && npm run dist:win",
+    "dist:win": "npm run build && electron-builder --win portable zip"
+  },
+  "build": {
+    "appId": "local.ezviz.sdcard.viewer",
+    "productName": "EZVIZ SD Card Viewer",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "asar": true,
+    "npmRebuild": false,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "vendor/ffmpeg",
+        "to": "ffmpeg",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        "portable",
+        "zip"
+      ]
+    }
   },
   "devDependencies": {
     "@types/node": "^25.8.0",
     "electron": "^31.7.7",
+    "electron-builder": "^26.8.1",
     "typescript": "^6.0.3"
   }
 }
