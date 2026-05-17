@@ -28,12 +28,14 @@ time window. It uses a circular buffer structure.
 
 ### Special Record (16 bytes at offset 0x30)
 
-Contains the currently-being-written recording info.
+Contains an activity/write marker. In the sample it points at the next write
+slot and its timestamps do not match that slot's persisted index record, so it
+must not be treated as a normal index record.
 
 | Offset | Size | Type  | Description              |
 |--------|------|-------|--------------------------|
 | 0x00   | 2    | u16   | Record index             |
-| 0x02   | 2    | u16   | Channel number           |
+| 0x02   | 2    | u16   | Flag / channel-related value |
 | 0x04   | 4    | u32   | Start timestamp (Unix)   |
 | 0x08   | 4    | u32   | End timestamp (Unix)     |
 | 0x0C   | 4    | u32   | Reserved                 |
@@ -45,9 +47,8 @@ with 0xFFFF markers at alternating positions indicating used/free blocks.
 
 ### Index Records (from bitmap end, 32 bytes each, 475 records)
 
-One record per MP4 file. Records are in a circular buffer:
-- Records 0 to (write_pos-1): newest recordings
-- Records write_pos to (total-1): oldest recordings
+One record per MP4 file. Records are in a circular buffer. Chronological order
+is write_pos..file_count-1 followed by 0..write_pos-1.
 
 | Offset | Size | Type  | Description                         |
 |--------|------|-------|-------------------------------------|
@@ -69,7 +70,8 @@ The index_count field in the header indicates the next write position.
 
 ## logCurFile.bin (16 MB)
 
-Rolling log of recent recording sessions (start/stop events).
+Rolling log slots for recent recording sessions. It can contain a wrapped tail
+after the first start_ts == 0 marker.
 
 ### Header (32 bytes at offset 0x00)
 
@@ -79,8 +81,8 @@ Rolling log of recent recording sessions (start/stop events).
 | 0x04   | 4    | u32   | Earliest timestamp in log    |
 | 0x08   | 4    | u32   | Latest recording timestamp   |
 | 0x0C   | 4    | u32   | Unknown (often 1)            |
-| 0x10   | 4    | u32   | Current record count         |
-| 0x14   | 4    | u32   | Max record capacity          |
+| 0x10   | 4    | u32   | Unknown; sample looks like current slot |
+| 0x14   | 4    | u32   | Unknown; sample looks like wrapped tail start |
 | 0x18   | 4    | u32   | Unknown                      |
 | 0x1C   | 4    | u32   | Timestamp marker             |
 
@@ -91,14 +93,14 @@ Rolling log of recent recording sessions (start/stop events).
 | 0x00   | 4    | u32   | Session start time (Unix)      |
 | 0x04   | 4    | u32   | Session end time (Unix)        |
 
-Records are sequential: each record's end time equals the next record's
-start time (with small gaps for camera restart/motion detection delay).
+Records are stored in 8-byte slots. Valid slots should be detected by scanning
+for plausible timestamp pairs, then grouped by consecutive slot number.
 
 ## logMainFile.bin (32 MB)
 
-Long-term historical log of all recording sessions. Same format as
-logCurFile.bin but larger capacity. Contains the full history of all
-recordings since the camera was first set up (or SD card formatted).
+Long-term historical log slots. Same 8-byte record layout as logCurFile.bin but
+larger. Header fields after 0x08 are not the same simple count/capacity values
+seen in older assumptions.
 
 ### Header
 
@@ -135,6 +137,24 @@ def ts_to_str(ts):
     if dt is None:
         return "N/A"
     return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+LOG_TS_MIN = 1262304000  # 2010-01-01, used only to reject uninitialized noise.
+LOG_TS_MAX = 4102444800  # 2100-01-01
+MAX_LOG_DURATION_SECONDS = 366 * 24 * 60 * 60
+
+
+def is_plausible_log_record(start_ts, end_ts):
+    """Return True if an 8-byte log slot looks like a recording interval."""
+    if not (LOG_TS_MIN <= start_ts <= LOG_TS_MAX):
+        return False
+    if end_ts == 0:
+        return True
+    if not (LOG_TS_MIN <= end_ts <= LOG_TS_MAX):
+        return False
+    if end_ts < start_ts:
+        return False
+    return (end_ts - start_ts) <= MAX_LOG_DURATION_SECONDS
 
 
 def parse_index(data):
@@ -239,31 +259,66 @@ def parse_log(data):
         "earliest_ts": hdr_fields[1],
         "latest_ts_dup": hdr_fields[2],
         "val_0x0c": hdr_fields[3],
-        "record_count": hdr_fields[4],
-        "max_records": hdr_fields[5],
+        "val_0x10": hdr_fields[4],
+        "val_0x14": hdr_fields[5],
         "val_0x18": hdr_fields[6],
         "timestamp_marker": hdr_fields[7],
+        "raw_fields": hdr_fields,
     }
 
-    # Parse log records (8 bytes each: start_ts, end_ts)
-    MAX_RECORDS = (len(data) - 0x20) // 8
+    # Scan every 8-byte slot. logCurFile.bin can contain a valid wrapped
+    # tail after the first start_ts == 0 marker, so stopping there loses data.
+    max_slots = (len(data) - 0x20) // 8
     records = []
-    for i in range(MAX_RECORDS):
+    segments = []
+    current_segment = None
+    first_zero_slot = None
+    for i in range(max_slots):
         off = 0x20 + i * 8
         start_ts = struct.unpack_from("<I", data, off)[0]
         end_ts = struct.unpack_from("<I", data, off + 4)[0]
-        if start_ts == 0:
-            break
+        if start_ts == 0 and first_zero_slot is None:
+            first_zero_slot = i
+        if not is_plausible_log_record(start_ts, end_ts):
+            current_segment = None
+            continue
+
+        if current_segment is None:
+            current_segment = {
+                "segment": len(segments),
+                "start_slot": i,
+                "end_slot": i,
+                "count": 0,
+                "start_ts": start_ts,
+                "end_ts": end_ts,
+            }
+            segments.append(current_segment)
+        else:
+            current_segment["end_slot"] = i
+            current_segment["end_ts"] = end_ts
+
+        segment_order = current_segment["count"]
+        current_segment["count"] += 1
         records.append(
             {
                 "index": i,
+                "slot": i,
+                "segment": current_segment["segment"],
+                "segment_order": segment_order,
                 "start_ts": start_ts,
                 "end_ts": end_ts,
-                "duration": end_ts - start_ts,
+                "duration": None if end_ts == 0 else end_ts - start_ts,
             }
         )
 
-    return {"header": header, "records": records, "valid_count": len(records)}
+    return {
+        "header": header,
+        "records": records,
+        "segments": segments,
+        "valid_count": len(records),
+        "slot_count": max_slots,
+        "first_zero_slot": first_zero_slot,
+    }
 
 
 def print_index_summary(parsed, title="Index File"):
@@ -286,14 +341,20 @@ def print_index_summary(parsed, title="Index File"):
     print(f"  Max index:   {hdr['max_index']}")
     print(f"  Bitmap:      {parsed['bitmap_size']} bytes")
 
-    print(f"\n[Current Recording (live)]")
-    print(f"  File:        hiv{spec['index']:05d}.mp4")
-    print(f"  Channel:     {spec['channel']}")
+    print(f"\n[Special / Activity Marker]")
+    print(f"  Slot:        {spec['index']}  (hiv{spec['index']:05d}.mp4 when committed)")
+    print(f"  Flag:        {spec['channel']}")
     print(f"  Start:       {ts_to_str(spec['start_ts'])}")
     print(f"  End:         {ts_to_str(spec['end_ts'])}")
     if spec["end_ts"] > spec["start_ts"]:
         dur = spec["end_ts"] - spec["start_ts"]
         print(f"  Duration:    {dur}s = {dur//60}m {dur%60}s")
+    matching_index_record = next((r for r in records if r["index"] == spec["index"]), None)
+    if matching_index_record and (
+        matching_index_record["start_ts"] != spec["start_ts"]
+        or matching_index_record["end_ts"] != spec["end_ts"]
+    ):
+        print("  Note:        marker time differs from the persisted index record")
 
     # Circular buffer order
     print(f"\n[Circular Buffer Layout]")
@@ -322,15 +383,23 @@ def print_log_summary(parsed, title="Log File"):
     print(f"\n[Header]")
     print(f"  Latest TS:    {ts_to_str(hdr['latest_ts'])}")
     print(f"  Earliest TS:  {ts_to_str(hdr['earliest_ts'])}")
-    print(f"  Record count: {hdr['record_count']}")
-    print(f"  Max records:  {hdr['max_records']}")
+    print(f"  Raw fields:   {', '.join(str(v) for v in hdr['raw_fields'])}")
 
     print(f"\n[Records]")
-    print(f"  Valid records:  {parsed['valid_count']}")
+    print(f"  Slot count:      {parsed['slot_count']}")
+    print(f"  First zero slot: {parsed['first_zero_slot']}")
+    print(f"  Valid records:   {parsed['valid_count']}")
+    print(f"  Valid segments:  {len(parsed['segments'])}")
+    for seg in parsed["segments"]:
+        print(
+            f"    Segment {seg['segment']}: slots {seg['start_slot']}-{seg['end_slot']} "
+            f"({seg['count']} records), {ts_to_str(seg['start_ts'])} -> {ts_to_str(seg['end_ts'])}"
+        )
     if records:
-        print(f"  First session:  {ts_to_str(records[0]['start_ts'])}")
-        print(f"  Last session:   {ts_to_str(records[-1]['end_ts'])}")
-        total_dur = sum(r["duration"] for r in records)
+        chronological = sorted(records, key=lambda r: r["start_ts"])
+        print(f"  First session:  {ts_to_str(chronological[0]['start_ts'])}")
+        print(f"  Last session:   {ts_to_str(chronological[-1]['end_ts'])}")
+        total_dur = sum(r["duration"] or 0 for r in records)
         print(f"  Total duration: {total_dur}s = {total_dur//3600}h {(total_dur%3600)//60}m")
 
 
@@ -430,12 +499,18 @@ def main():
     chrono = sorted(records, key=lambda r: (r["index"] - write_pos) % idx_parsed["header"]["file_count"])
 
     with open(csv_path, "w", encoding="utf-8") as f:
-        f.write("filename,start_time,end_time,duration_seconds,channel,type,is_live\n")
+        f.write("filename,start_time,end_time,duration_seconds,channel,type,is_next_write_slot,matches_special_marker\n")
         for rec in records:
-            is_live = rec["index"] == idx_parsed["special_record"]["index"]
+            is_next_write_slot = rec["index"] == idx_parsed["special_record"]["index"]
+            matches_special_marker = (
+                is_next_write_slot
+                and rec["start_ts"] == idx_parsed["special_record"]["start_ts"]
+                and rec["end_ts"] == idx_parsed["special_record"]["end_ts"]
+            )
             f.write(
                 f"{rec['filename']},{ts_to_str(rec['start_ts'])},{ts_to_str(rec['end_ts'])},"
-                f"{rec['end_ts'] - rec['start_ts']},{rec['channel']},{rec['type']},{'yes' if is_live else 'no'}\n"
+                f"{rec['end_ts'] - rec['start_ts']},{rec['channel']},{rec['type']},"
+                f"{'yes' if is_next_write_slot else 'no'},{'yes' if matches_special_marker else 'no'}\n"
             )
     print(f"\nCSV exported to: {csv_path}")
 
