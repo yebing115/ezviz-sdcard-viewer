@@ -1,0 +1,14 @@
+{
+  "name": "ezviz-sdcard-viewer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local Electron viewer for EZVIZ SD card recording fragments.",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "check": "node src/check-index.js"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7"
+  }
+}

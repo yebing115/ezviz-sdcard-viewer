@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>萤石 SD 卡录像查看器</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <h1>录像查看器</h1>
+          <p id="summary">读取索引中...</p>
+        </div>
+
+        <label class="field">
+          <span>日期</span>
+          <select id="dateSelect"></select>
+        </label>
+
+        <div class="stats">
+          <div>
+            <span>索引</span>
+            <strong id="indexSource">-</strong>
+          </div>
+          <div>
+            <span>可播放分片</span>
+            <strong id="playableCount">-</strong>
+          </div>
+          <div>
+            <span>日期数量</span>
+            <strong id="dayCount">-</strong>
+          </div>
+        </div>
+
+        <div class="segments" id="segments"></div>
+      </aside>
+
+      <section class="viewer">
+        <header class="toolbar">
+          <div>
+            <h2 id="currentTitle">选择一个时间段</h2>
+            <p id="currentMeta">按日期筛选后点击左侧时间段播放。</p>
+          </div>
+          <button id="refreshButton" type="button" title="重新读取 bin 索引">刷新</button>
+        </header>
+
+        <div class="video-wrap">
+          <video id="player" controls autoplay muted playsinline></video>
+        </div>
+
+        <div class="play-controls">
+          <label class="field">
+            <span>片段内时间</span>
+            <input id="offsetRange" type="range" min="0" max="0" value="0" step="1" disabled>
+          </label>
+          <div class="offset-row">
+            <span id="offsetLabel">00:00:00</span>
+            <button id="playOffsetButton" type="button" disabled>从此处播放</button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script src="./renderer.js"></script>
+  </body>
+</html>
