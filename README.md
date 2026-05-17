@@ -8,9 +8,12 @@
 npm start
 ```
 
+启动后点击“选择目录”，选择包含 `index00.bin` 或 `index01.bin` 以及 `hiv*.mp4` 的目录。
+应用会记住上次选择的目录；下次启动时会优先读取该目录。
+
 ## 数据来源
 
-应用运行时直接解析当前目录里的 `index00.bin` 或 `index01.bin`，不会读取 `recordings.csv`、`recordings_chronological.csv` 等 CSV 文件。更新 bin/mp4 文件后，重启应用或点击界面里的“刷新”会重新统计。
+应用运行时直接解析所选目录里的 `index00.bin` 或 `index01.bin`，不会读取 `recordings.csv`、`recordings_chronological.csv` 等 CSV 文件。更新 bin/mp4 文件后，点击界面里的“刷新”会重新统计。
 
 ## 播放方式
 

@@ -11,6 +11,8 @@ const state = {
 
 const els = {
   summary: document.getElementById("summary"),
+  directoryPath: document.getElementById("directoryPath"),
+  chooseDirectoryButton: document.getElementById("chooseDirectoryButton"),
   dateSelect: document.getElementById("dateSelect"),
   indexSource: document.getElementById("indexSource"),
   playableCount: document.getElementById("playableCount"),
@@ -55,6 +57,7 @@ async function loadCatalog() {
 
 function renderCatalog() {
   const catalog = state.catalog;
+  els.directoryPath.textContent = catalog.baseDir || "未选择";
   els.indexSource.textContent = catalog.indexSource;
   els.playableCount.textContent = `${catalog.playableCount}/${catalog.recordCount}`;
   els.dayCount.textContent = String(catalog.days.length);
@@ -70,6 +73,25 @@ function renderCatalog() {
   }
 
   renderSegments();
+}
+
+function clearCatalog(message) {
+  state.catalog = null;
+  state.selectedDate = "";
+  state.selectedSegment = null;
+  els.dateSelect.innerHTML = "";
+  els.segments.textContent = message;
+  els.directoryPath.textContent = "未选择";
+  els.indexSource.textContent = "-";
+  els.playableCount.textContent = "-";
+  els.dayCount.textContent = "-";
+  els.player.removeAttribute("src");
+  els.player.load();
+  els.currentTitle.textContent = "选择一个数据目录";
+  els.currentMeta.textContent = "请选择包含 index00.bin/index01.bin 和 hiv*.mp4 的目录。";
+  els.offsetRange.disabled = true;
+  els.playOffsetButton.disabled = true;
+  setStatus(message);
 }
 
 function renderSegments() {
@@ -137,12 +159,31 @@ els.dateSelect.addEventListener("change", () => {
 });
 
 els.refreshButton.addEventListener("click", () => {
-  loadCatalog().catch((error) => setStatus(error.message));
+  loadCatalog().catch((error) => clearCatalog(error.message));
+});
+
+els.chooseDirectoryButton.addEventListener("click", async () => {
+  setStatus("正在选择目录...");
+  const result = await window.ezviz.chooseDirectory();
+  if (result.canceled) {
+    setStatus(state.catalog ? `${state.catalog.firstTime} 至 ${state.catalog.lastTime}` : "请选择数据目录");
+    return;
+  }
+  if (!result.ok) {
+    clearCatalog(result.error || "目录无法解析");
+    return;
+  }
+  state.catalog = result.catalog;
+  state.selectedDate = state.catalog.days.at(-1)?.date || "";
+  state.selectedSegment = null;
+  els.player.removeAttribute("src");
+  els.player.load();
+  renderCatalog();
 });
 
 els.offsetRange.addEventListener("input", updateOffsetLabel);
 els.playOffsetButton.addEventListener("click", () => playSegment(Number(els.offsetRange.value || 0)));
 
 loadCatalog().catch((error) => {
-  setStatus(error.message);
+  clearCatalog(error.message);
 });

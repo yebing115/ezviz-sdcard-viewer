@@ -1,14 +1,42 @@
 "use strict";
 
-const { app, BrowserWindow, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
+const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { buildCatalog, loadIndex } = require("./ezviz-index");
 
-const BASE_DIR = path.resolve(__dirname, "..");
 let server;
 let serverPort;
+let selectedBaseDir = null;
+
+function settingsPath() {
+  return path.join(app.getPath("userData"), "settings.json");
+}
+
+function loadSettings() {
+  try {
+    const settings = JSON.parse(fs.readFileSync(settingsPath(), "utf8"));
+    if (settings.baseDir && fs.existsSync(settings.baseDir)) {
+      selectedBaseDir = settings.baseDir;
+    }
+  } catch {
+    selectedBaseDir = null;
+  }
+}
+
+function saveSettings() {
+  fs.mkdirSync(app.getPath("userData"), { recursive: true });
+  fs.writeFileSync(settingsPath(), JSON.stringify({ baseDir: selectedBaseDir }, null, 2));
+}
+
+function requireSelectedBaseDir() {
+  if (!selectedBaseDir) {
+    throw new Error("请先选择包含 index00.bin/index01.bin 和 hiv*.mp4 的目录");
+  }
+  return selectedBaseDir;
+}
 
 function sendJson(res, statusCode, body) {
   const payload = JSON.stringify(body);
@@ -27,7 +55,7 @@ function parseUrl(req) {
 function streamVideo(req, res, url) {
   const id = url.searchParams.get("id");
   const offset = Math.max(0, Number(url.searchParams.get("offset") || "0"));
-  const index = loadIndex(BASE_DIR);
+  const index = loadIndex(requireSelectedBaseDir());
   const record = index.records.find((item) => String(item.index) === String(id));
 
   if (!record || !record.exists) {
@@ -106,7 +134,7 @@ function startServer() {
         const url = parseUrl(req);
 
         if (url.pathname === "/api/catalog") {
-          sendJson(res, 200, buildCatalog(BASE_DIR));
+          sendJson(res, 200, buildCatalog(requireSelectedBaseDir()));
           return;
         }
 
@@ -139,7 +167,8 @@ function createWindow() {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true
+      sandbox: true,
+      preload: path.join(__dirname, "preload.js")
     }
   });
 
@@ -154,6 +183,29 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  loadSettings();
+  ipcMain.handle("choose-directory", async (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    const result = await dialog.showOpenDialog(window, {
+      title: "选择包含 bin 和 mp4 文件的目录",
+      properties: ["openDirectory"]
+    });
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return { ok: false, canceled: true };
+    }
+
+    const nextDir = result.filePaths[0];
+    try {
+      const catalog = buildCatalog(nextDir);
+      selectedBaseDir = nextDir;
+      saveSettings();
+      return { ok: true, catalog };
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
+  });
+
   await startServer();
   createWindow();
 
